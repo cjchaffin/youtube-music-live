@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Project specific
+config/auth.json
+data/library.json
+data/playlist.txt
+data/tts/
+test_out.mp4
+
+# IDEs & System
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
