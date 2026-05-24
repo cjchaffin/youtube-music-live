@@ -200,9 +200,13 @@ def fetch_artist_genre_radio(query: str) -> List[Dict[str, Any]]:
             
         # 2. Get the watch playlist (radio queue) starting from this song
         # get_watch_playlist behaves like the "radio" feed for a specific track.
-        radio_data = yt.get_watch_playlist(videoId=seed_video_id, limit=50)
-        raw_tracks = radio_data.get("tracks", [])
-        logger.info(f"Fetched {len(raw_tracks)} tracks from watch playlist (radio).")
+        raw_tracks = []
+        try:
+            radio_data = yt.get_watch_playlist(videoId=seed_video_id, limit=50)
+            raw_tracks = radio_data.get("tracks", [])
+            logger.info(f"Fetched {len(raw_tracks)} tracks from watch playlist (radio).")
+        except Exception as re:
+            logger.warning(f"Failed to fetch watch playlist (radio): {re}. Falling back to search results.")
         
         verified_tracks = []
         for t in raw_tracks:

@@ -53,14 +53,16 @@ manager = ConnectionManager()
 
 # Setup Orchestrator event hooks to forward telemetry to WebSockets
 # Since thread callbacks run in background threads, we bridge them to FastAPI's event loop
-event_loop = asyncio.get_event_loop()
+event_loop = None
 
 def run_async_coro(coro):
     """Helper to safely schedule a coroutine on the running FastAPI event loop."""
+    if event_loop is None:
+        return
     try:
         asyncio.run_coroutine_threadsafe(coro, event_loop)
     except Exception as e:
-        logger.debug(f"Failed to schedule WebSocket broadcast: {e}")
+        logger.error(f"Failed to schedule WebSocket broadcast: {e}")
 
 # Register orchestrator event callbacks
 orchestrator.on_track_change = lambda track: run_async_coro(
@@ -195,6 +197,8 @@ def trigger_tts_break():
 # WebSocket Telemetry Endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    global event_loop
+    event_loop = asyncio.get_running_loop()
     await manager.connect(websocket)
     try:
         # Keep connection open and receive optional client messages
