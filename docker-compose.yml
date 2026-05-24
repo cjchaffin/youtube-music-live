@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: youtube-music-live
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./assets:/app/assets
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - YOUTUBE_STREAM_KEY=${YOUTUBE_STREAM_KEY}
+      - PIPER_URL=http://piper:5000
+    depends_on:
+      - piper
+
+  piper:
+    image: rhasspy/piper-tts:latest
+    container_name: youtube-music-live-piper
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    command: ["--voice", "en_US-lessac-medium"]
+    volumes:
+      - ./data/tts_cache:/cache

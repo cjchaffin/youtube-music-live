@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Live - Control Room</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts: Orbitron & Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="glow-bg"></div>
+    <div class="container">
+        <!-- HEADER -->
+        <header>
+            <div class="logo">
+                <span class="neon-text">YT MUSIC LIVE</span>
+                <span class="sub-logo">// CONTROL MODULE v1.0</span>
+            </div>
+            <div class="status-panel">
+                <span class="status-label">STREAM STATUS:</span>
+                <div id="stream-status-badge" class="badge offline">
+                    <span class="indicator"></span>
+                    <span class="badge-text">OFFLINE</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- MAIN LAYOUT GRID -->
+        <main class="grid-layout">
+            <!-- LEFT PANEL: CONTROLS & SELECTION -->
+            <section class="panel control-panel">
+                <h2>SYSTEM Mode SELECTOR</h2>
+                
+                <div class="mode-options">
+                    <button class="mode-btn active" id="mode-liked" onclick="setMode('liked')">
+                        <div class="btn-icon">❤️</div>
+                        <div class="btn-info">
+                            <span class="btn-title">Liked Music</span>
+                            <span class="btn-desc">Curation from your library</span>
+                        </div>
+                    </button>
+                    
+                    <button class="mode-btn" id="mode-seed" onclick="setMode('seed')">
+                        <div class="btn-icon">🎯</div>
+                        <div class="btn-info">
+                            <span class="btn-title">Seed Prompt</span>
+                            <span class="btn-desc">Generate radio queue from seed</span>
+                        </div>
+                    </button>
+                    
+                    <button class="mode-btn" id="mode-playlist" onclick="setMode('playlist')">
+                        <div class="btn-icon">🔗</div>
+                        <div class="btn-info">
+                            <span class="btn-title">Playlist Link</span>
+                            <span class="btn-desc">Stream from a YouTube playlist</span>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- DYNAMIC INPUT AREA -->
+                <div class="input-card">
+                    <!-- Seed Input -->
+                    <div id="input-group-seed" class="input-group hidden">
+                        <label for="seed-query">Genre or Artist Seed</label>
+                        <div class="input-action-wrapper">
+                            <input type="text" id="seed-query" placeholder="e.g. Synthwave, Lofi, A$AP Rocky..." />
+                            <button class="action-btn" onclick="applySeed()">Apply</button>
+                        </div>
+                    </div>
+
+                    <!-- Playlist Input -->
+                    <div id="input-group-playlist" class="input-group hidden">
+                        <label for="playlist-url">YouTube/YT Music Playlist URL</label>
+                        <div class="input-action-wrapper">
+                            <input type="text" id="playlist-url" placeholder="Paste URL here..." />
+                            <button class="action-btn" onclick="applyPlaylist()">Load</button>
+                        </div>
+                    </div>
+
+                    <!-- Liked Music Info -->
+                    <div id="input-group-liked" class="input-group">
+                        <p class="info-text">Streaming directly from your authenticated YouTube Music Liked catalog.</p>
+                        <button class="action-btn secondary" onclick="refreshIngestion()">Re-sync Library</button>
+                    </div>
+                </div>
+
+                <!-- STREAM ACTION BUTTONS -->
+                <div class="stream-actions">
+                    <button id="btn-toggle-stream" class="btn-primary start" onclick="toggleStream()">
+                        START LIVESTREAM
+                    </button>
+                    <button id="btn-skip-track" class="btn-secondary" onclick="skipTrack()">
+                        SKIP TRACK
+                    </button>
+                </div>
+            </section>
+
+            <!-- RIGHT TOP PANEL: NOW PLAYING -->
+            <section class="panel now-playing-panel">
+                <h2>NOW PLAYING TELEMETRY</h2>
+                
+                <div class="now-playing-content">
+                    <div class="album-art-wrapper">
+                        <img id="track-art" src="https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300&auto=format&fit=crop" alt="Album Art">
+                        <div class="vinyl-overlay"></div>
+                    </div>
+                    <div class="track-details">
+                        <h3 id="track-title">SYSTEM INACTIVE</h3>
+                        <p id="track-artist">Start the stream to initiate playlist</p>
+                        <p id="track-album" class="album-name">-</p>
+                        
+                        <!-- Track progress bar -->
+                        <div class="progress-container">
+                            <div class="progress-bar" id="track-progress" style="width: 0%;"></div>
+                        </div>
+                        <div class="time-info">
+                            <span id="time-current">0:00</span>
+                            <span id="time-total">0:00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VOICE OVER / HOST BREAK CONTROLS -->
+                <div class="voiceover-card">
+                    <div class="voiceover-header">
+                        <h3>Piper Host Parameters</h3>
+                        <div class="toggle-wrapper">
+                            <label class="switch">
+                                <input type="checkbox" id="tts-enabled" checked onchange="toggleTTS()">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="toggle-label">Voice Enabled</span>
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <div class="control-col">
+                            <label>Break Frequency (Every N tracks)</label>
+                            <input type="number" id="tts-frequency" min="2" max="10" value="4" onchange="updateTTSFrequency()">
+                        </div>
+                        <div class="control-col button-col">
+                            <button class="action-btn secondary" onclick="triggerManualBreak()">Force Voice Break</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- BOTTOM PANEL: SYSTEM CONSOLE & TELEMETRY -->
+            <section class="panel console-panel">
+                <h2>SYSTEM TELEMETRY & FFmpeg LOGS</h2>
+                <div class="console-wrapper">
+                    <div class="console-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="console-title">terminal-flow@youtube-music-live:~$</span>
+                    </div>
+                    <div class="console-body" id="console-logs">
+                        <div class="log-line system">[SYSTEM] Dashboard initialized. Waiting for connection...</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- JS script -->
+    <script src="app.js"></script>
+</body>
+</html>
