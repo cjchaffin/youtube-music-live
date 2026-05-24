@@ -14,9 +14,12 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - YOUTUBE_STREAM_KEY=${YOUTUBE_STREAM_KEY}
+      - LOCAL_RTMP_TEST=${LOCAL_RTMP_TEST}
+      - STREAM_VISUALIZER=${STREAM_VISUALIZER}
       - PIPER_URL=http://piper:5000
     depends_on:
       - piper
+      - rtmp
 
   piper:
     image: artibex/piper-http:latest
@@ -28,4 +31,12 @@ services:
       - VOICE=en_US-lessac-medium
     volumes:
       - ./data/tts_cache:/app/models
+
+  rtmp:
+    image: tiangolo/nginx-rtmp:latest
+    container_name: youtube-music-live-rtmp
+    restart: unless-stopped
+    ports:
+      - "1935:1935"
+
 

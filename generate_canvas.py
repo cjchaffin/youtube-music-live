@@ -1,192 +1,248 @@
 import os
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import math
+from PIL import Image, ImageDraw, ImageFont
 
-def create_cyberpunk_background():
-    # 1. Initialize image in RGBA for transparency/layer operations
+
+def create_canvas():
     width, height = 1920, 1080
-    base_color = (8, 5, 18, 255) # Deep dark violet-blue
-    img = Image.new("RGBA", (width, height), base_color)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # LAYOUT ZONES (pixel coords, 1920x1080):
+    #   Hero zone:       y=100 to y=620  (vinyl art left + track info right, vertically centered)
+    #   Viz zone:        y=650 to y=960  (FFmpeg bars overlay: x=60, y=650, 1800x310px)
+    #   Footer zone:     y=965 to y=1080
+    # ──────────────────────────────────────────────────────────────────────────
+
+    # ── 1. Background: deep dark gradient ─────────────────────────────────────
+    img = Image.new("RGBA", (width, height), (5, 4, 14, 255))
     draw = ImageDraw.Draw(img)
-
-    # Create a separate layer for glows and overlays
-    glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow_layer)
-
-    # 2. Draw vertical gradient for ambient background light
-    # We want a subtle fade to a slightly lighter violet in the center-top
     for y in range(height):
-        # Interpolation factor from top to bottom
-        factor = y / height
-        # Blend deep violet/black with dark purple
-        # Top: (10, 6, 24) -> Bottom: (4, 2, 10)
-        r = int(10 * (1 - factor) + 4 * factor)
-        g = int(6 * (1 - factor) + 2 * factor)
-        b = int(24 * (1 - factor) + 10 * factor)
-        draw.line([(0, y), (width, y)], fill=(r, g, b, 255))
+        t = y / height
+        r = int(8 * (1 - t) + 3 * t)
+        g = int(5 * (1 - t) + 3 * t)
+        b = int(22 * (1 - t) + 10 * t)
+        draw.line([(0, y), (width, y)], fill=(max(2, r), max(2, g), max(8, b), 255))
 
-    # 3. Add soft radial glows in the background
-    # Large central purple glow
-    center_x, center_y = width // 2, height // 2
-    for r_outer in range(900, 50, -25):
-        # Draw concentric transparent ellipses for smooth radial glow
-        alpha = int(4 * (1.0 - (r_outer / 900))**2) # Soft falloff
-        glow_draw.ellipse(
-            [center_x - r_outer, center_y - r_outer, center_x + r_outer, center_y + r_outer],
-            fill=(138, 43, 226, alpha) # BlueViolet
+    # ── 2. Dual ambient glow: one behind art, one behind info ─────────────────
+    glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+
+    # Glow behind vinyl art (left)
+    for r_out in range(480, 10, -16):
+        alpha = int(8 * (1 - r_out / 480) ** 1.8)
+        gd.ellipse([340 - r_out, 360 - r_out, 340 + r_out, 360 + r_out],
+                   fill=(70, 30, 160, alpha))
+
+    # Glow behind info zone (right, softer)
+    for r_out in range(500, 10, -18):
+        alpha = int(4 * (1 - r_out / 500) ** 2)
+        gd.ellipse([1200 - r_out, 360 - r_out, 1200 + r_out, 360 + r_out],
+                   fill=(50, 20, 120, alpha))
+
+    img = Image.alpha_composite(img, glow)
+
+    # ── 3. Decoration layer ────────────────────────────────────────────────────
+    dec = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(dec)
+
+    # Top accent lines
+    dd.line([(0, 1), (width, 1)], fill=(0, 240, 255, 50), width=1)
+    dd.line([(0, 4), (width, 4)], fill=(0, 240, 255, 15), width=1)
+
+    # Zone dividers
+    dd.line([(60, 95), (width - 60, 95)], fill=(0, 240, 255, 20), width=1)
+    dd.line([(60, 640), (width - 60, 640)], fill=(0, 240, 255, 20), width=1)
+    dd.line([(60, 963), (width - 60, 963)], fill=(0, 240, 255, 12), width=1)
+
+    # ── 4. Load fonts ──────────────────────────────────────────────────────────
+    font_paths = [
+        "assets/bahnschrift.ttf",
+        "C:\\Windows\\Fonts\\bahnschrift.ttf",
+        "/app/assets/bahnschrift.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
+    font_path = None
+    for p in font_paths:
+        if os.path.exists(p):
+            font_path = p
+            break
+
+    try:
+        if font_path:
+            font_sm = ImageFont.truetype(font_path, 11)
+            font_md = ImageFont.truetype(font_path, 13)
+            font_lg = ImageFont.truetype(font_path, 16)
+        else:
+            raise IOError()
+    except IOError:
+        font_sm = font_md = font_lg = ImageFont.load_default()
+
+    # ── 5. Album art placeholder — vinyl record ───────────────────────────────
+    # Centered vertically in hero zone (y=100 to y=620 → center y=360)
+    # Art box: 440x440px, centered at x=340, y=360
+    ART_SIZE = 440
+    cx_art, cy_art = 340, 360
+    ART_X1 = cx_art - ART_SIZE // 2
+    ART_Y1 = cy_art - ART_SIZE // 2
+    ART_X2 = ART_X1 + ART_SIZE
+    ART_Y2 = ART_Y1 + ART_SIZE
+
+    # Card background glow
+    for pad in range(32, 0, -4):
+        al = int(35 * (1 - pad / 32) ** 1.8)
+        dd.rectangle([ART_X1 - pad, ART_Y1 - pad, ART_X2 + pad, ART_Y2 + pad],
+                     outline=(80, 40, 200, al), width=1)
+    dd.rectangle([ART_X1, ART_Y1, ART_X2, ART_Y2], fill=(8, 5, 18, 248))
+
+    # Vinyl disc layers (bright, punchy — they need to read at broadcast res)
+    vinyl_layers = [
+        (210, (22, 16, 44, 255)),   # outer disc fill
+        (207, (55, 35, 100, 255)),  # bright groove edge
+        (200, (22, 16, 44, 255)),   # back to dark
+        (184, (48, 30, 90, 255)),   # groove ring
+        (168, (22, 16, 44, 255)),
+        (152, (44, 28, 85, 255)),
+        (136, (22, 16, 44, 255)),
+        (118, (40, 24, 80, 255)),
+        (100, (22, 16, 44, 255)),
+        (82,  (38, 22, 76, 255)),
+        (64,  (22, 16, 44, 255)),
+        (50,  (55, 30, 110, 255)),  # label area (brighter purple-blue)
+        (46,  (48, 26, 98, 255)),
+        (9,   (5, 4, 12, 255)),     # spindle hole
+    ]
+    for radius, color in vinyl_layers:
+        dd.ellipse(
+            [cx_art - radius, cy_art - radius, cx_art + radius, cy_art + radius],
+            fill=color,
         )
 
-    # 4. Draw retro-futuristic grid (perspective)
-    # Grid horizon
-    horizon_y = 620
-    grid_color = (186, 85, 211) # MediumOrchid
-    
-    # 4a. Horizontal lines with logarithmic-like perspective spacing
-    num_horiz_lines = 24
-    for i in range(num_horiz_lines):
-        # Calculate y coordinate using power curve to simulate perspective depth
-        t = i / (num_horiz_lines - 1)
-        y = horizon_y + int((height - horizon_y) * (t ** 2.2))
-        
-        # Grid lines get brighter/more opaque closer to the viewer (bottom)
-        # and fade to 0 at the horizon
-        alpha = int(10 + 60 * (t ** 1.5))
-        glow_draw.line([(0, y), (width, y)], fill=(grid_color[0], grid_color[1], grid_color[2], alpha), width=1)
+    # Vivid outer glow on vinyl edge
+    for g_r in range(220, 202, -1):
+        a_g = int(80 * (1 - (g_r - 202) / 18) ** 1.5)
+        dd.ellipse(
+            [cx_art - g_r, cy_art - g_r, cx_art + g_r, cy_art + g_r],
+            outline=(60, 30, 140, a_g), width=1,
+        )
 
-    # 4b. Perspective vertical lines converging to the center horizon
-    num_vert_lines = 40
-    # Center of convergence is at (width/2, horizon_y)
-    # We want them to spread out at the bottom
-    bottom_spacing = width // 15
-    for i in range(-num_vert_lines, num_vert_lines + 1):
-        x_bottom = (width // 2) + i * bottom_spacing
-        x_top = (width // 2) + i * (bottom_spacing // 6) # Slow converge
-        
-        # Fade vertical lines out towards the left/right and horizon
-        dist_factor = 1.0 - min(1.0, abs(i) / num_vert_lines)
-        alpha = int(45 * dist_factor)
-        
-        # Draw the line starting from horizon to bottom
-        glow_draw.line([(x_top, horizon_y), (x_bottom, height)], fill=(grid_color[0], grid_color[1], grid_color[2], alpha), width=1)
+    # Cyan shine highlight (top-left of disc)
+    for h_r in range(215, 195, -2):
+        a_h = int(40 * (1 - (h_r - 195) / 20) ** 2)
+        dd.arc(
+            [cx_art - h_r, cy_art - h_r, cx_art + h_r, cy_art + h_r],
+            start=210, end=280,
+            fill=(0, 200, 255, a_h), width=2,
+        )
 
-    # 5. Composite background with glows
-    img = Image.alpha_composite(img, glow_layer)
-    draw = ImageDraw.Draw(img)
+    # Groove radial texture
+    for angle_deg in range(0, 360, 8):
+        rad = math.radians(angle_deg)
+        for r_seg in range(54, 205, 24):
+            r_end = min(r_seg + 17, 204)
+            x1 = cx_art + r_seg * math.cos(rad)
+            y1 = cy_art + r_seg * math.sin(rad)
+            x2 = cx_art + r_end * math.cos(rad)
+            y2 = cy_art + r_end * math.sin(rad)
+            dd.line([(x1, y1), (x2, y2)], fill=(70, 45, 115, 12), width=1)
 
-    # Create a new layer for waveforms and text to enable glowing effects
-    wave_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    wave_draw = ImageDraw.Draw(wave_layer)
+    # Corner brackets on art card
+    CLEN = 20
+    BC = (0, 240, 255, 120)
+    for bx, by in [(ART_X1, ART_Y1), (ART_X2, ART_Y1), (ART_X1, ART_Y2), (ART_X2, ART_Y2)]:
+        dx = CLEN if bx == ART_X1 else -CLEN
+        dy = CLEN if by == ART_Y1 else -CLEN
+        dd.line([(bx, by), (bx + dx, by)], fill=BC, width=2)
+        dd.line([(bx, by), (bx, by + dy)], fill=BC, width=2)
 
-    # 6. Draw clean blue/cyan waveforms
-    # We'll draw 3 beautiful complex waveforms
-    wave_configs = [
-        # (amplitude, base_freq, micro_freq, phase, color, glow_color, base_y, line_width)
-        (80, 0.004, 0.025, 0.0, (0, 240, 255, 255), (0, 240, 255, 40), 610, 3), # Main Cyan wave
-        (50, 0.007, 0.04, 2.5, (0, 140, 255, 220), (0, 140, 255, 30), 610, 2),  # Mid Blue wave
-        (35, 0.012, 0.07, 4.8, (120, 220, 255, 180), (120, 220, 255, 20), 610, 1) # High-freq accent wave
+    # "ALBUM ART" micro-label
+    dd.text((cx_art, ART_Y2 - 18), "[ ALBUM ART ]", font=font_sm,
+            fill=(0, 240, 255, 38), anchor="mm")
+
+    # ── 6. Track info zone (right panel, full height) ─────────────────────────
+    # Info zone: x=600 to x=1860, y=100 to y=620
+    INFO_X = 620
+    INFO_Y_START = 120
+
+    # Vertical separator line
+    dd.line([(INFO_X - 22, 108), (INFO_X - 22, 622)], fill=(0, 240, 255, 16), width=1)
+
+    # "NOW PLAYING" label
+    dd.text((INFO_X, INFO_Y_START + 20), "NOW PLAYING", font=font_md,
+            fill=(186, 85, 211, 200))
+    dd.line([(INFO_X, INFO_Y_START + 43), (INFO_X + 310, INFO_Y_START + 43)],
+            fill=(186, 85, 211, 65), width=1)
+
+    # Guide labels for FFmpeg drawtext
+    # TRACK label y=230 → FFmpeg title at y=244, fontsize=40
+    # ARTIST label y=308 → FFmpeg artist at y=320, fontsize=26
+    dd.text((INFO_X, 230), "TRACK", font=font_sm, fill=(0, 240, 255, 40))
+    dd.text((INFO_X, 308), "ARTIST", font=font_sm, fill=(0, 240, 255, 30))
+
+    # ── Big empty space for FFmpeg title (y≈244, size 40) ──
+    # ── Big empty space for FFmpeg artist (y≈320, size 26) ──
+
+    # Divider before broadcast block
+    dd.line([(INFO_X, 410), (width - 90, 410)], fill=(0, 240, 255, 14), width=1)
+
+    # Broadcast info block
+    dd.text((INFO_X, 422), "BROADCAST INFO", font=font_sm, fill=(186, 85, 211, 90))
+    bcast_lines = [
+        "ENCODER :  H.264 (libx264)  /  AAC @ 192 KBPS",
+        "FORMAT  :  RTMP  →  YouTube Live Ingest",
+        "SCHEDULE:  24 / 7  CONTINUOUS BROADCAST",
     ]
+    for i, line in enumerate(bcast_lines):
+        dd.text((INFO_X, 444 + i * 22), line, font=font_sm, fill=(255, 255, 255, 70))
 
-    for amp, b_freq, m_freq, phase, color, glow_col, base_y, w_width in wave_configs:
-        points = []
-        for x in range(0, width + 5, 2):
-            # Smooth envelope that tapers to 0 at edges
-            # using a sine window
-            env = math.sin(math.pi * x / width) ** 2
-            
-            # Combine main wave and high-frequency noise
-            main_sin = math.sin(b_freq * x + phase)
-            micro_sin = math.sin(m_freq * x - phase * 1.5)
-            
-            y_offset = (main_sin * 0.8 + micro_sin * 0.2) * amp * env
-            y = base_y + y_offset
-            points.append((x, y))
-            
-        # Draw glow line (wider, low opacity)
-        wave_draw.line(points, fill=glow_col, width=w_width + 6)
-        # Draw core line (thinner, bright)
-        wave_draw.line(points, fill=color, width=w_width)
+    # ── 7. Visualizer zone frame ───────────────────────────────────────────────
+    VIZ_X1, VIZ_Y1 = 60, 650
+    VIZ_X2, VIZ_Y2 = width - 60, 958
 
-    # 7. Draw minimalist text 'YOUTUBE MUSIC LIVE'
-    # We'll use Bahnschrift.ttf if available
-    try:
-        font_path = "C:\\Windows\\Fonts\\bahnschrift.ttf"
-        font_large = ImageFont.truetype(font_path, 40)
-        font_sub = ImageFont.truetype(font_path, 13)
-    except IOError:
-        # Fallback to default if not found
-        font_large = ImageFont.load_default()
-        font_sub = ImageFont.load_default()
+    # Dark fill
+    dd.rectangle([VIZ_X1, VIZ_Y1, VIZ_X2, VIZ_Y2], fill=(0, 0, 0, 75),
+                 outline=(0, 240, 255, 25), width=1)
 
-    # Spaced text function for modern minimalist style
-    def draw_spaced_text_centered(draw_obj, text, center_x, y, font, color, spacing):
-        char_widths = []
-        for char in text:
-            # Measure char width
-            bbox = draw_obj.textbbox((0, 0), char, font=font)
-            char_widths.append(bbox[2] - bbox[0])
-            
-        total_width = sum(char_widths) + spacing * (len(text) - 1)
-        start_x = center_x - total_width / 2
-        
-        curr_x = start_x
-        for i, char in enumerate(text):
-            draw_obj.text((curr_x, y), char, font=font, fill=color)
-            curr_x += char_widths[i] + spacing
+    # Scanline atmosphere
+    for sy in range(VIZ_Y1 + 2, VIZ_Y2, 5):
+        dd.line([(VIZ_X1 + 1, sy), (VIZ_X2 - 1, sy)], fill=(0, 240, 255, 3), width=1)
 
-    # Draw Text
-    text_color = (255, 255, 255, 255)
-    text_glow_color = (0, 240, 255, 30) # Cyan glow for text
-    
-    text_y = 380
-    # Draw a subtle glow behind the text
-    for offset_x in [-2, 0, 2]:
-        for offset_y in [-2, 0, 2]:
-            if offset_x != 0 or offset_y != 0:
-                draw_spaced_text_centered(wave_draw, "YOUTUBE MUSIC LIVE", width // 2 + offset_x, text_y + offset_y, font_large, text_glow_color, 16)
-                
-    # Draw main sharp text
-    draw_spaced_text_centered(wave_draw, "YOUTUBE MUSIC LIVE", width // 2, text_y, font_large, text_color, 16)
+    # Corner brackets
+    VIZ_C = 22
+    VBC = (0, 240, 255, 80)
+    for vx, vy in [(VIZ_X1, VIZ_Y1), (VIZ_X2, VIZ_Y1), (VIZ_X1, VIZ_Y2), (VIZ_X2, VIZ_Y2)]:
+        dx = VIZ_C if vx == VIZ_X1 else -VIZ_C
+        dy = VIZ_C if vy == VIZ_Y1 else -VIZ_C
+        dd.line([(vx, vy), (vx + dx, vy)], fill=VBC, width=2)
+        dd.line([(vx, vy), (vx, vy + dy)], fill=VBC, width=2)
 
-    # Draw minimalist tech decorations
-    # Draw a thin bracket around the text
-    bracket_color = (0, 240, 255, 120)
-    # Let's define the box size
-    box_w, box_h = 750, 90
-    box_x1 = (width - box_w) // 2
-    box_y1 = text_y - 25
-    box_x2 = box_x1 + box_w
-    box_y2 = box_y1 + box_h
-    
-    # Corner brackets (cyberpunk style L-shapes)
-    len_corner = 20
-    # Top-Left
-    wave_draw.line([(box_x1, box_y1), (box_x1 + len_corner, box_y1)], fill=bracket_color, width=1)
-    wave_draw.line([(box_x1, box_y1), (box_x1, box_y1 + len_corner)], fill=bracket_color, width=1)
-    # Top-Right
-    wave_draw.line([(box_x2, box_y1), (box_x2 - len_corner, box_y1)], fill=bracket_color, width=1)
-    wave_draw.line([(box_x2, box_y1), (box_x2, box_y1 + len_corner)], fill=bracket_color, width=1)
-    # Bottom-Left
-    wave_draw.line([(box_x1, box_y2), (box_x1 + len_corner, box_y2)], fill=bracket_color, width=1)
-    wave_draw.line([(box_x1, box_y2), (box_x1, box_y2 - len_corner)], fill=bracket_color, width=1)
-    # Bottom-Right
-    wave_draw.line([(box_x2, box_y2), (box_x2 - len_corner, box_y2)], fill=bracket_color, width=1)
-    wave_draw.line([(box_x2, box_y2), (box_x2, box_y2 - len_corner)], fill=bracket_color, width=1)
+    # Zone label
+    dd.text((VIZ_X1 + 8, VIZ_Y1 + 5), "[ LIVE VISUALIZER ]", font=font_sm,
+            fill=(0, 240, 255, 60))
 
-    # Draw subtitle below
-    sub_y = text_y + 95
-    draw_spaced_text_centered(wave_draw, "• 24/7 DOWNTEMPO LO-FI ELECTRONIC BEATS •", width // 2, sub_y, font_sub, (186, 85, 211, 200), 4)
+    # ── 8. Footer ──────────────────────────────────────────────────────────────
+    footer_items = [
+        (60,          "AUDIO: AAC 192KBPS"),
+        (340,         "VIDEO: H.264 1080P"),
+        (620,         "SCHEDULE: 24/7 CONTINUOUS"),
+        (width - 310, "STREAM: LIVE  ●"),
+    ]
+    for fx, ft in footer_items:
+        dd.text((fx, 986), ft, font=font_sm, fill=(255, 255, 255, 48))
 
-    # Composite waveform and text onto base image
-    final_img = Image.alpha_composite(img, wave_layer)
-    
-    # Convert to RGB to save as JPG or PNG without alpha channel if not needed,
-    # but PNG supports RGBA and is standard. Let's convert to RGB to ensure max compatibility
-    # and clean presentation.
-    rgb_img = final_img.convert("RGB")
-    
-    output_path = "canvas_static.png"
-    rgb_img.save(output_path, "PNG")
-    print(f"Image successfully generated and saved to {os.path.abspath(output_path)}")
+    # ── 9. Composite and save ──────────────────────────────────────────────────
+    final = Image.alpha_composite(img, dec)
+    rgb = final.convert("RGB")
+
+    out_path = "canvas_static.png"
+    if os.path.exists("assets"):
+        out_path = os.path.join("assets", "canvas_static.png")
+
+    rgb.save(out_path, "PNG")
+    print(f"Canvas saved: {os.path.abspath(out_path)}")
+    print(f"  Vinyl art placeholder: cx={cx_art}, cy={cy_art}  ({ART_SIZE}x{ART_SIZE}px)")
+    print(f"  Track info (FFmpeg):   x=620, y=244 (title, size 40) / y=320 (artist, size 26)")
+    print(f"  Viz overlay zone:      x=60,  y=650  (1800x308px)")
+
 
 if __name__ == "__main__":
-    create_cyberpunk_background()
+    create_canvas()

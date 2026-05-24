@@ -30,13 +30,13 @@ def generate_voiceover(text: str, filename: str = "host_break.wav") -> str:
             timeout=15
         )
         
-        if response.status_code == 200:
+        if response.status_code == 200 and response.content and len(response.content) > 0:
             with open(output_path, "wb") as f:
                 f.write(response.content)
             logger.info(f"Voiceover successfully synthesized and saved to {output_path}")
             return str(output_path)
         else:
-            logger.error(f"Piper TTS synthesis failed with status code {response.status_code}: {response.text}")
+            logger.error(f"Piper TTS synthesis failed or returned empty content. Status code: {response.status_code}")
             return None
             
     except requests.exceptions.RequestException as e:

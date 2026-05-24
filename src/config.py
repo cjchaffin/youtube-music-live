@@ -6,10 +6,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
+    # Project Paths
+    PROJECT_ROOT: Path = PROJECT_ROOT
+    
     # API Keys & Stream Configurations
     GEMINI_API_KEY: str = ""
     YOUTUBE_STREAM_KEY: str = ""
     PIPER_URL: str = "http://localhost:5000"
+    LOCAL_RTMP_TEST: bool = False
+    STREAM_VISUALIZER: str = "showfreqs"
+
     
     # App Settings
     DASHBOARD_PORT: int = 8000

@@ -671,6 +671,18 @@ input:checked + .slider:before {
     color: #8be9fd;
 }
 
+.progress-bar.unknown-duration {
+    background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple), var(--neon-blue)) !important;
+    background-size: 200% 100% !important;
+    animation: flow-gradient 2s linear infinite !important;
+}
+
+@keyframes flow-gradient {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+}
+
+
 /* Responsive adjustment */
 @media (max-width: 900px) {
     .grid-layout {
@@ -681,4 +693,37 @@ input:checked + .slider:before {
     .console-panel {
         grid-column: 1;
     }
+}
+
+/* Custom Dropdown Selector Styling */
+.custom-select {
+    width: 100%;
+    background: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    padding-right: 40px;
+}
+
+.custom-select:focus {
+    outline: none;
+    border-color: var(--neon-blue);
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.25);
+}
+
+.custom-select option {
+    background: #0e0e15;
+    color: #fff;
 }

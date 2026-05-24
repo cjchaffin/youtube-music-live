@@ -85,6 +85,21 @@
                     </div>
                 </div>
 
+                <!-- VISUALIZER SELECTION -->
+                <div class="input-card" style="flex-grow: 0; margin-bottom: 20px;">
+                    <div class="input-group">
+                        <label for="visualizer-select">Livestream Audio Visualizer</label>
+                        <select id="visualizer-select" onchange="setVisualizer()" class="custom-select">
+                            <option value="showfreqs">Frequency Bars (Default)</option>
+                            <option value="showcqt">CQT Spectrum</option>
+                            <option value="showwaves">Waveform Lines</option>
+                            <option value="showspectrum">Spectrogram</option>
+                            <option value="avectorscope">Vector Scope</option>
+                            <option value="none">Static Only</option>
+                        </select>
+                    </div>
+                </div>
+
                 <!-- STREAM ACTION BUTTONS -->
                 <div class="stream-actions">
                     <button id="btn-toggle-stream" class="btn-primary start" onclick="toggleStream()">

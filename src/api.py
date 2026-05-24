@@ -1,8 +1,9 @@
 import asyncio
 import json
 import logging
+import threading
 from typing import Set
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -57,12 +58,26 @@ event_loop = None
 
 def run_async_coro(coro):
     """Helper to safely schedule a coroutine on the running FastAPI event loop."""
+    global event_loop
     if event_loop is None:
+        try:
+            event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+            
+    if event_loop is None:
+        coro.close()  # Close the coroutine to prevent "never awaited" warning
         return
     try:
         asyncio.run_coroutine_threadsafe(coro, event_loop)
     except Exception as e:
         logger.error(f"Failed to schedule WebSocket broadcast: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    global event_loop
+    event_loop = asyncio.get_running_loop()
+    logger.info("FastAPI startup: main event loop captured successfully.")
 
 # Register orchestrator event callbacks
 orchestrator.on_track_change = lambda track: run_async_coro(
@@ -93,6 +108,9 @@ class TtsToggleRequest(BaseModel):
 class TtsFrequencyRequest(BaseModel):
     frequency: int
 
+class VisualizerRequest(BaseModel):
+    visualizer: str
+
 # API Endpoints
 @app.get("/api/status")
 def get_status():
@@ -104,7 +122,8 @@ def get_status():
             "tts_enabled": orchestrator.tts_enabled,
             "tts_frequency": orchestrator.tts_frequency,
             "seed_query": orchestrator.seed_query,
-            "playlist_url": orchestrator.playlist_url
+            "playlist_url": orchestrator.playlist_url,
+            "visualizer": settings.STREAM_VISUALIZER
         }
     }
 
@@ -114,6 +133,16 @@ def set_mode(req: ModeRequest):
         raise HTTPException(status_code=400, detail="Invalid mode. Select 'liked', 'seed', or 'playlist'.")
     orchestrator.set_mode(req.mode)
     return {"status": "success", "mode": req.mode}
+
+@app.post("/api/set-visualizer")
+def set_visualizer(req: VisualizerRequest):
+    valid_visualizers = ["showfreqs", "showcqt", "showwaves", "avectorscope", "showspectrum", "none"]
+    val = req.visualizer.lower()
+    if val not in valid_visualizers:
+        raise HTTPException(status_code=400, detail=f"Invalid visualizer. Options: {', '.join(valid_visualizers)}")
+    engine.change_visualizer(val)
+    run_async_coro(manager.broadcast({"type": "visualizer", "visualizer": val}))
+    return {"status": "success", "visualizer": val}
 
 @app.post("/api/set-seed")
 def set_seed(req: SeedRequest):
@@ -209,8 +238,9 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Import threading to spawn tasks
-import threading
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 # Serve index.html and web files
 # Make sure we mount static folder after defining API routes to prevent catching them

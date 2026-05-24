@@ -62,6 +62,13 @@ function handleTelemetryMessage(msg) {
             updateConfigFields(msg.config);
             break;
             
+        case 'visualizer':
+            if (document.getElementById('visualizer-select')) {
+                document.getElementById('visualizer-select').value = msg.visualizer;
+            }
+            appendLog(`[SYSTEM] Visualizer feed swapped to: ${msg.visualizer.toUpperCase()}`, 'success');
+            break;
+            
         default:
             console.log('Unknown WebSocket message:', msg);
     }
@@ -134,13 +141,23 @@ function updateProgress(elapsed, duration) {
     const totalText = document.getElementById('time-total');
     
     if (duration <= 0) {
-        progressBar.style.width = '0%';
-        currentText.textContent = '0:00';
-        totalText.textContent = '0:00';
+        progressBar.style.width = '100%';
+        progressBar.classList.add('unknown-duration');
+        currentText.textContent = formatTime(elapsed);
+        totalText.textContent = '--:--';
+        
         clearInterval(progressInterval);
+        if (isStreaming) {
+            const start = Date.now();
+            progressInterval = setInterval(() => {
+                const extraElapsed = Math.floor((Date.now() - start) / 1000);
+                currentText.textContent = formatTime(elapsed + extraElapsed);
+            }, 1000);
+        }
         return;
     }
     
+    progressBar.classList.remove('unknown-duration');
     const percent = Math.min((elapsed / duration) * 100, 100);
     progressBar.style.width = `${percent}%`;
     currentText.textContent = formatTime(elapsed);
@@ -179,6 +196,10 @@ function updateConfigFields(config) {
     }
     if (config.playlist_url) {
         document.getElementById('playlist-url').value = config.playlist_url;
+    }
+    if (config.visualizer) {
+        const sel = document.getElementById('visualizer-select');
+        if (sel) sel.value = config.visualizer;
     }
 }
 
@@ -225,7 +246,7 @@ async function applySeed() {
             body: JSON.stringify({ query })
         });
         const data = await response.json();
-        appendLog(`[SYSTEM] Loaded ${data.count} tracks from seed.`, 'success');
+        appendLog(`[SYSTEM] ${data.message}`, 'success');
     } catch (err) {
         appendLog(`[ERROR] Failed to apply seed: ${err.message}`, 'error');
     }
@@ -243,7 +264,7 @@ async function applyPlaylist() {
             body: JSON.stringify({ url })
         });
         const data = await response.json();
-        appendLog(`[SYSTEM] Loaded ${data.count} tracks from playlist.`, 'success');
+        appendLog(`[SYSTEM] ${data.message}`, 'success');
     } catch (err) {
         appendLog(`[ERROR] Failed to load playlist: ${err.message}`, 'error');
     }
@@ -254,7 +275,7 @@ async function refreshIngestion() {
         appendLog('[SYSTEM] Refreshing liked music catalog from YTMusic...', 'system');
         const response = await fetch('/api/refresh-ingestion', { method: 'POST' });
         const data = await response.json();
-        appendLog(`[SYSTEM] Refreshed library. Saved ${data.count} verified tracks.`, 'success');
+        appendLog(`[SYSTEM] ${data.message}`, 'success');
     } catch (err) {
         appendLog(`[ERROR] Ingestion sync failed: ${err.message}`, 'error');
     }
@@ -325,6 +346,25 @@ async function triggerManualBreak() {
         await fetch('/api/trigger-tts-break', { method: 'POST' });
     } catch (err) {
         appendLog(`[ERROR] Failed to trigger voice break: ${err.message}`, 'error');
+    }
+}
+
+async function setVisualizer() {
+    const selectEl = document.getElementById('visualizer-select');
+    if (!selectEl) return;
+    const visualizer = selectEl.value;
+    
+    try {
+        appendLog(`[SYSTEM] Changing livestream visualizer config to: ${visualizer.toUpperCase()}...`, 'system');
+        const response = await fetch('/api/set-visualizer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ visualizer })
+        });
+        const data = await response.json();
+        appendLog(`[SYSTEM] Visualizer updated: ${data.visualizer.toUpperCase()}`, 'success');
+    } catch (err) {
+        appendLog(`[ERROR] Failed to update visualizer: ${err.message}`, 'error');
     }
 }
 

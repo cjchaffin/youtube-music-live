@@ -50,18 +50,21 @@ def verify_track_safety(track: Dict[str, Any]) -> bool:
             return False
             
         # Check artists
-        artists = track.get("artists", [])
-        if not artists:
-            logger.debug(f"Track {video_id} ('{track.get('title')}') has no artists. Flagged unsafe.")
+        artists = track.get("artists") or []
+        if not isinstance(artists, list) or not artists:
+            logger.debug(f"Track {video_id} ('{track.get('title')}') has no artists or invalid format. Flagged unsafe.")
             return False
             
         # Ensure at least one artist has a valid browseId (official artist or topic)
         has_official_artist = False
         for artist in artists:
-            artist_id = artist.get("id")
-            if artist_id and (artist_id.startswith("UC") or artist_id.startswith("FUrartist_")):
-                has_official_artist = True
-                break
+            if isinstance(artist, dict):
+                artist_id = artist.get("id")
+                if artist_id and (artist_id.startswith("UC") or artist_id.startswith("FUrartist_")):
+                    has_official_artist = True
+                    break
+            elif isinstance(artist, str):
+                pass
                 
         if not has_official_artist:
             logger.debug(f"Track {video_id} ('{track.get('title')}') lacks official artist browseId. Flagged unsafe.")
@@ -69,10 +72,18 @@ def verify_track_safety(track: Dict[str, Any]) -> bool:
             
         # Ensure it has a canonical release record (an album is present for official songs)
         album = track.get("album")
-        if not album or not album.get("name"):
-            # Some official singles might lack a detailed album object but have album keys,
-            # but completely missing album names usually indicates user uploads/video clips.
+        if not album:
             logger.debug(f"Track {video_id} ('{track.get('title')}') lacks album metadata. Flagged unsafe.")
+            return False
+            
+        album_name = None
+        if isinstance(album, dict):
+            album_name = album.get("name")
+        elif isinstance(album, str):
+            album_name = album
+            
+        if not album_name:
+            logger.debug(f"Track {video_id} ('{track.get('title')}') lacks album name. Flagged unsafe.")
             return False
             
         return True
@@ -84,23 +95,61 @@ def parse_track_data(track: Dict[str, Any]) -> Dict[str, Any]:
     """
     Parses a raw YTMusic track object into our validated schema.
     """
-    artists = track.get("artists", [])
-    artist_names = [a.get("name", "Unknown Artist") for a in artists]
+    artists = track.get("artists") or []
+    artist_names = []
+    if isinstance(artists, list):
+        for a in artists:
+            if isinstance(a, dict):
+                artist_names.append(a.get("name") or "Unknown Artist")
+            elif isinstance(a, str):
+                artist_names.append(a)
+    else:
+        artist_names.append("Unknown Artist")
+        
+    if not artist_names:
+        artist_names.append("Unknown Artist")
     artist_str = ", ".join(artist_names)
     
     # Get thumbnail URL
-    thumbnails = track.get("thumbnails", [])
-    thumbnail_url = thumbnails[-1].get("url") if thumbnails else ""
+    thumbnails = track.get("thumbnails") or []
+    thumbnail_url = ""
+    if isinstance(thumbnails, list) and thumbnails:
+        last_thumb = thumbnails[-1]
+        if isinstance(last_thumb, dict):
+            thumbnail_url = last_thumb.get("url") or ""
     
+    # Handle album
+    album = track.get("album")
+    album_name = "Unknown Album"
+    if isinstance(album, dict):
+        album_name = album.get("name") or "Unknown Album"
+    elif isinstance(album, str):
+        album_name = album
+        
     return {
         "track_id": track.get("videoId"),
         "title": track.get("title", "Unknown Title"),
         "artist": artist_str,
-        "album": track.get("album", {}).get("name", "Unknown Album") if track.get("album") else "Unknown Album",
+        "album": album_name,
         "duration_seconds": track.get("duration_seconds", 0),
         "thumbnail_url": thumbnail_url,
         "safety_status": "verified"
     }
+
+def load_library_fallback() -> List[Dict[str, Any]]:
+    """
+    Loads cached tracks from library.json as a fallback.
+    """
+    library_path = settings.library_json_path
+    if library_path.exists():
+        try:
+            with open(library_path, "r", encoding="utf-8") as f:
+                tracks = json.load(f)
+            logger.info(f"Loaded {len(tracks)} fallback tracks from local library cache.")
+            return tracks
+        except Exception as e:
+            logger.error(f"Failed to load fallback library: {e}")
+    return []
 
 def save_library(tracks: List[Dict[str, Any]]) -> None:
     """

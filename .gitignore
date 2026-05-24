@@ -9,11 +9,9 @@ env/
 .env
 
 # Project specific
-config/auth.json
-data/library.json
-data/playlist.txt
-data/tts/
-test_out.mp4
+data/
+*.png
+!assets/canvas_static.png
 
 # IDEs & System
 .idea/

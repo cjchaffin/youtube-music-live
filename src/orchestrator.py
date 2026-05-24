@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import logging
 import threading
@@ -12,7 +13,8 @@ from src.ingestion import (
     fetch_liked_music,
     fetch_artist_genre_radio,
     fetch_playlist,
-    get_ytmusic_client
+    get_ytmusic_client,
+    load_library_fallback
 )
 from src.tts import generate_voiceover
 
@@ -45,6 +47,10 @@ class StreamOrchestrator:
         self.is_running = False
         self.skip_requested = False
         self.active_decoder = None
+        
+        self.is_replenishing = False
+        self.last_replenish_attempt = 0.0
+        self.replenish_failure_count = 0
         
         self._lock = threading.Lock()
         
@@ -96,10 +102,32 @@ class StreamOrchestrator:
         Retrieves the next track from the queue, or populates it
         if empty based on the current mode.
         """
+        # Determine if we need to replenish without holding the lock for network calls
+        must_replenish = False
+        now = time.time()
         with self._lock:
-            if not self.queue:
-                self._replenish_queue()
-                
+            if not self.queue and not self.is_replenishing:
+                # Exponential backoff cooldown: 3s, 6s, 12s, 24s, up to 60s max
+                cooldown = min(60, 3 * (2 ** self.replenish_failure_count)) if self.replenish_failure_count > 0 else 0
+                if now - self.last_replenish_attempt >= cooldown:
+                    must_replenish = True
+                    self.is_replenishing = True
+                    self.last_replenish_attempt = now
+
+        if must_replenish:
+            try:
+                tracks = self._fetch_tracks_for_replenish()
+                with self._lock:
+                    if tracks:
+                        self.queue = list(tracks)
+                        self.replenish_failure_count = 0
+                    else:
+                        self.replenish_failure_count += 1
+            finally:
+                with self._lock:
+                    self.is_replenishing = False
+
+        with self._lock:
             if self.queue:
                 # Pop next track
                 track = self.queue.pop(0)
@@ -109,28 +137,39 @@ class StreamOrchestrator:
                 return track
         return None
 
-    def _replenish_queue(self):
-        """Replenishes queue from sources depending on active mode. (Internal Lock required)"""
-        self.log("Music queue exhausted. Replenishing catalog...", "system")
-        
+    def _fetch_tracks_for_replenish(self) -> List[Dict[str, Any]]:
+        """Fetches tracks depending on active mode (does NOT require lock, no lock held)"""
+        with self._lock:
+            mode = self.mode
+            seed_query = self.seed_query
+            playlist_url = self.playlist_url
+
+        self.log(f"Music queue exhausted. Replenishing catalog for mode '{mode.upper()}'...", "system")
         try:
-            if self.mode == "liked":
+            tracks = []
+            if mode == "liked":
                 tracks = fetch_liked_music()
                 if tracks:
                     # Shuffle to keep liked catalog fresh
                     random.shuffle(tracks)
-                    self.queue = list(tracks)
-            elif self.mode == "seed" and self.seed_query:
+            elif mode == "seed" and seed_query:
                 # Fetch radio recommendations based on query
-                tracks = fetch_artist_genre_radio(self.seed_query)
-                if tracks:
-                    self.queue = list(tracks)
-            elif self.mode == "playlist" and self.playlist_url:
-                tracks = fetch_playlist(self.playlist_url)
-                if tracks:
-                    self.queue = list(tracks)
+                tracks = fetch_artist_genre_radio(seed_query)
+            elif mode == "playlist" and playlist_url:
+                tracks = fetch_playlist(playlist_url)
+
+            if tracks:
+                return tracks
+
+            # If fetch failed or returned no tracks, attempt local library fallback
+            self.log("Replenishment yielded no tracks from API. Attempting local library fallback...", "warning")
+            fallback_tracks = load_library_fallback()
+            if fallback_tracks:
+                self.log(f"Successfully loaded {len(fallback_tracks)} fallback tracks from cache.", "success")
+                return fallback_tracks
         except Exception as e:
             self.log(f"Error replenishing music queue: {e}", "error")
+        return []
 
     def generate_host_script(self) -> str:
         """
@@ -219,9 +258,6 @@ class StreamOrchestrator:
         else:
             self.log("Voiceover synthesis failed. Skipping host break.", "error")
             return None
-
-# Import regex in module scope
-import re
 
 # Create orchestrator singleton
 orchestrator = StreamOrchestrator()
