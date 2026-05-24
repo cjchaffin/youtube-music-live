@@ -23,6 +23,7 @@ class StreamEngine:
         self._lock = threading.Lock()
         self._hls_server: Optional[http.server.HTTPServer] = None
         self._hls_server_thread: Optional[threading.Thread] = None
+        self._clock_thread: Optional[threading.Thread] = None
         
     def resolve_stream_url(self, video_id: str) -> Optional[tuple]:
         """
@@ -70,6 +71,34 @@ class StreamEngine:
                 f.write(artist)
         except Exception as e:
             logger.error(f"Failed to write telemetry files: {e}")
+
+    def _clock_file_path(self) -> Path:
+        if os.name == 'nt':
+            settings.DATA_PATH.mkdir(parents=True, exist_ok=True)
+            return settings.DATA_PATH / "clock.txt"
+        return Path("/tmp/clock.txt")
+
+    def _start_clock_writer(self):
+        """Updates a tiny text file so FFmpeg can render a live clock."""
+        if self._clock_thread and self._clock_thread.is_alive():
+            return
+
+        def write_loop():
+            path = self._clock_file_path()
+            while orchestrator.is_running:
+                try:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(time.strftime("%I:%M %p").lstrip("0"))
+                except Exception as e:
+                    logger.warning(f"Failed to write clock telemetry: {e}")
+                time.sleep(1)
+
+        self._clock_thread = threading.Thread(
+            target=write_loop,
+            name="ClockTelemetryWriter",
+            daemon=True,
+        )
+        self._clock_thread.start()
 
     def start_stream_loop(self):
         """
@@ -133,93 +162,241 @@ class StreamEngine:
                 
                 visualizer = settings.STREAM_VISUALIZER.lower()
                 framerate = "2"
+                background_video_path = settings.ASSETS_PATH / "workshop-base.png"
+                use_video_background = background_video_path.exists()
+                self._start_clock_writer()
                 
                 # Resolve escaped paths for FFmpeg filters depending on OS
                 if os.name == 'nt':
                     f_path = str(settings.ASSETS_PATH / "bahnschrift.ttf").replace("\\", "/").replace(":", "\\:")
                     t_path = str(settings.DATA_PATH / "title.txt").replace("\\", "/").replace(":", "\\:")
                     a_path = str(settings.DATA_PATH / "artist.txt").replace("\\", "/").replace(":", "\\:")
+                    c_path = str(self._clock_file_path()).replace("\\", "/").replace(":", "\\:")
                 else:
                     f_path = "/app/assets/bahnschrift.ttf"
                     t_path = "/tmp/title.txt"
                     a_path = "/tmp/artist.txt"
+                    c_path = "/tmp/clock.txt"
                 
-                # drawtext overlays — positioned in the hero zone's track info panel
-                # Canvas layout: track info x=620, title at y=244 (size 40), artist at y=320 (size 26)
+                # Drawtext overlays positioned inside the canvas metadata panel.
                 drawtext_chain = (
                     f",drawtext=fontfile='{f_path}':textfile='{t_path}':reload=1"
-                    f":x=620:y=244:fontsize=40:fontcolor=white:shadowx=2:shadowy=2:shadowcolor=black"
+                    f":x=680:y=266:fontsize=46:fontcolor=white:shadowx=3:shadowy=3:shadowcolor=black"
                     f",drawtext=fontfile='{f_path}':textfile='{a_path}':reload=1"
-                    f":x=620:y=320:fontsize=26:fontcolor=0x00F0FF:shadowx=1:shadowy=1:shadowcolor=black"
+                    f":x=680:y=350:fontsize=30:fontcolor=0x00F0FF:shadowx=2:shadowy=2:shadowcolor=black"
                 )
                 
                 filter_complex = None
 
-                # ── Visualizer overlay zone: x=60, y=660, 1800x300px (bottom strip) ──────────────
+                # Visualizer overlay zone: x=60, y=716, 1800x268px (bottom strip).
                 if visualizer == "showfreqs":
                     # Frequency bar EQ — log scale, teal/violet bars per stereo channel
                     framerate = "25"
                     filter_complex = (
-                        f"[1:a]showfreqs=s=1800x300:mode=bar:ascale=sqrt:fscale=log"
-                        f":colors=0x00CCFF|0x9944FF:win_func=hann"
-                        f",format=yuv420p[freqs];"
-                        f"[0:v][freqs]overlay=60:650{drawtext_chain}[outv]"
+                        f"[1:a]showfreqs=s=1800x268:mode=bar:ascale=sqrt:fscale=log"
+                        f":colors=cyan|magenta:win_func=hann"
+                        f",format=rgba,colorkey=0x000000:0.10:0.05[freqs];"
+                        f"[0:v][freqs]overlay=60:716{drawtext_chain}[outv]"
                     )
                 elif visualizer == "showwaves":
                     # Centerline waveform — cyan and violet, full width
                     framerate = "25"
                     filter_complex = (
-                        f"[1:a]showwaves=s=1800x300:mode=cline:colors=0x00F0FFCC|0x8800FFCC"
-                        f":scale=sqrt:draw=full,format=yuv420p[wave];"
-                        f"[0:v][wave]overlay=60:650{drawtext_chain}[outv]"
+                        f"[1:a]showwaves=s=1800x268:mode=cline:colors=cyan|magenta"
+                        f":scale=sqrt:draw=full,format=rgba,colorkey=0x000000:0.10:0.05[wave];"
+                        f"[0:v][wave]overlay=60:716{drawtext_chain}[outv]"
                     )
                 elif visualizer == "showcqt":
                     # Constant-Q transform spectrum — bars only, no piano labels
                     framerate = "25"
                     filter_complex = (
-                        f"[1:a]showcqt=s=1800x300:fps=25:bar_g=2:axis_h=0"
-                        f":sono_h=0:bar_h=300:count=1:tc=0.33"
+                        f"[1:a]showcqt=s=1800x268:fps=25:bar_g=2:axis_h=0"
+                        f":sono_h=0:bar_h=268:count=1:tc=0.33"
                         f":basefreq=20:endfreq=20000"
-                        f",format=yuv420p[cqt];"
-                        f"[0:v][cqt]overlay=60:650{drawtext_chain}[outv]"
+                        f",format=rgba,colorkey=0x000000:0.10:0.05[cqt];"
+                        f"[0:v][cqt]overlay=60:716{drawtext_chain}[outv]"
                     )
                 elif visualizer == "avectorscope":
                     # Lissajous vector scope — centered in the 1800px-wide viz strip
-                    # Center offset: x=60+(1800-400)/2=760
+                    # Center offset: x=60+(1800-420)/2=750
                     framerate = "25"
                     filter_complex = (
-                        f"[1:a]avectorscope=s=400x300:scale=lin:draw=dots"
-                        f":rc=0:gc=240:bc=255:rf=50:gf=180:bf=255"
-                        f",format=yuv420p[radar];"
-                        f"[0:v][radar]overlay=760:650{drawtext_chain}[outv]"
+                        f"[1:a]avectorscope=s=420x268:scale=lin:draw=dots"
+                        f":rc=255:gc=49:bc=150:rf=0:gf=240:bf=255"
+                        f",format=rgba,colorkey=0x000000:0.10:0.05[radar];"
+                        f"[0:v][radar]overlay=750:716{drawtext_chain}[outv]"
                     )
                 elif visualizer == "showspectrum":
                     # Scrolling spectrogram waterfall — full width
                     framerate = "25"
                     filter_complex = (
-                        f"[1:a]showspectrum=s=1800x300:slide=scroll"
-                        f":color=channel:scale=cbrt:saturation=3"
-                        f",format=yuv420p[spec];"
-                        f"[0:v][spec]overlay=60:650{drawtext_chain}[outv]"
+                        f"[1:a]showspectrum=s=1800x268:slide=scroll"
+                        f":color=channel:scale=cbrt:saturation=4"
+                        f",format=rgba,colorkey=0x000000:0.10:0.05[spec];"
+                        f"[0:v][spec]overlay=60:716{drawtext_chain}[outv]"
                     )
                 else:  # "none" — text only, no visualizer
                     framerate = "5"
                     filter_complex = (
                         f"[0:v]"
                         f"drawtext=fontfile='{f_path}':textfile='{t_path}':reload=1"
-                        f":x=620:y=244:fontsize=40:fontcolor=white:shadowx=2:shadowy=2:shadowcolor=black,"
+                        f":x=680:y=266:fontsize=46:fontcolor=white:shadowx=3:shadowy=3:shadowcolor=black,"
                         f"drawtext=fontfile='{f_path}':textfile='{a_path}':reload=1"
-                        f":x=620:y=320:fontsize=26:fontcolor=0x00F0FF:shadowx=1:shadowy=1:shadowcolor=black"
+                        f":x=680:y=350:fontsize=30:fontcolor=0x00F0FF:shadowx=2:shadowy=2:shadowcolor=black"
                         f"[outv]"
                     )
+
+                if use_video_background:
+                    framerate = "25"
+                    def monitor_surface(label, x0, y0, x1, y1, x2, y2, x3, y3):
+                        left = min(x0, x1, x2, x3)
+                        top = min(y0, y1, y2, y3)
+                        right = max(x0, x1, x2, x3)
+                        bottom = max(y0, y1, y2, y3)
+                        rel = (
+                            x0 - left, y0 - top,
+                            x1 - left, y1 - top,
+                            x2 - left, y2 - top,
+                            x3 - left, y3 - top,
+                        )
+                        return {
+                            "label": label,
+                            "x": left,
+                            "y": top,
+                            "w": right - left,
+                            "h": bottom - top,
+                            "perspective": (
+                                f"perspective=x0={rel[0]}:y0={rel[1]}:x1={rel[2]}:y1={rel[3]}"
+                                f":x2={rel[4]}:y2={rel[5]}:x3={rel[6]}:y3={rel[7]}"
+                                f":sense=destination:eval=init"
+                            ),
+                        }
+
+                    # Fixed screen canvases for the cropped workshop image.
+                    # Corner order is top-left, top-right, bottom-left, bottom-right.
+                    monitors = {
+                        "left": monitor_surface("left", 654, 301, 811, 323, 680, 554, 808, 541),
+                        "center": monitor_surface("center", 816, 387, 1149, 392, 816, 577, 1144, 579),
+                        "right": monitor_surface("right", 1331, 382, 1534, 338, 1331, 506, 1530, 545),
+                    }
+                    left = monitors["left"]
+                    center = monitors["center"]
+                    right = monitors["right"]
+                    center_safe_x = 28
+                    center_safe_y = 14
+                    center_safe_w = center["w"] - 46
+                    center_safe_h = center["h"] - 36
+                    room_base_chain = (
+                        f"[0:v]scale=1920:1080,crop=1728:972:96:24,scale=1920:1080,setsar=1,fps=25[room];"
+                        f"color=c=black@0.0:s={left['w']}x{left['h']}:r=25,format=rgba,"
+                        f"drawtext=fontfile='{f_path}':textfile='{c_path}':reload=1"
+                        f":x=10:y=20:fontsize=22:fontcolor=0xBFE8FF"
+                        f":shadowx=2:shadowy=2:shadowcolor=black,"
+                        f"drawtext=fontfile='{f_path}':textfile='{t_path}':reload=1"
+                        f":x=10:y=74:fontsize=11:fontcolor=0xF4E6FF"
+                        f":shadowx=2:shadowy=2:shadowcolor=black,"
+                        f"drawtext=fontfile='{f_path}':textfile='{a_path}':reload=1"
+                        f":x=10:y=102:fontsize=11:fontcolor=0xBFE8FF"
+                        f":shadowx=2:shadowy=2:shadowcolor=black,{left['perspective']}[left_canvas];"
+                        f"color=c=black@0.0:s={right['w']}x{right['h']}:r=25,format=rgba,"
+                        f"drawtext=fontfile='{f_path}':text='LIVE'"
+                        f":x=18:y=24:fontsize=25:fontcolor=0xF4E6FF"
+                        f":shadowx=2:shadowy=2:shadowcolor=black,"
+                        f"drawtext=fontfile='{f_path}':text='AUDIO REACTIVE'"
+                        f":x=18:y=70:fontsize=14:fontcolor=0x9FE7FF"
+                        f":shadowx=2:shadowy=2:shadowcolor=black,{right['perspective']}[right_canvas];"
+                    )
+                    if visualizer == "showwaves":
+                        filter_complex = (
+                            f"{room_base_chain}[1:a]showwaves=s={center_safe_w}x{center_safe_h}:mode=cline:colors=cyan|magenta"
+                            f":scale=sqrt:draw=full,format=rgba,colorkey=0x000000:0.10:0.05,"
+                            f"colorchannelmixer=aa=0.85,"
+                            f"pad={center['w']}:{center['h']}:{center_safe_x}:{center_safe_y}:color=black@0.0,"
+                            f"{center['perspective']}[center_canvas];"
+                            f"[room][left_canvas]overlay={left['x']}:{left['y']}[lefted];"
+                            f"[lefted][center_canvas]overlay={center['x']}:{center['y']}[centered];"
+                            f"[centered][right_canvas]overlay={right['x']}:{right['y']}[outv]"
+                        )
+                    elif visualizer == "showcqt":
+                        filter_complex = (
+                            f"{room_base_chain}[1:a]showcqt=s={center_safe_w}x{center_safe_h}:fps=25:bar_g=2:axis_h=0"
+                            f":sono_h=0:bar_h={center_safe_h}:count=1:tc=0.33:basefreq=20:endfreq=20000"
+                            f",format=rgba,colorkey=0x000000:0.10:0.05,colorchannelmixer=aa=0.85,"
+                            f"pad={center['w']}:{center['h']}:{center_safe_x}:{center_safe_y}:color=black@0.0,"
+                            f"{center['perspective']}[center_canvas];"
+                            f"[room][left_canvas]overlay={left['x']}:{left['y']}[lefted];"
+                            f"[lefted][center_canvas]overlay={center['x']}:{center['y']}[centered];"
+                            f"[centered][right_canvas]overlay={right['x']}:{right['y']}[outv]"
+                        )
+                    elif visualizer == "avectorscope":
+                        scope_width = 150
+                        filter_complex = (
+                            f"{room_base_chain}[1:a]avectorscope=s={scope_width}x{center_safe_h}:scale=lin:draw=dots"
+                            f":rc=255:gc=49:bc=150:rf=0:gf=240:bf=255"
+                            f",format=rgba,colorkey=0x000000:0.10:0.05,colorchannelmixer=aa=0.85,"
+                            f"pad={center_safe_w}:{center_safe_h}:{(center_safe_w - scope_width) // 2}:0:color=black@0.0,"
+                            f"pad={center['w']}:{center['h']}:{center_safe_x}:{center_safe_y}:color=black@0.0,"
+                            f"{center['perspective']}[center_canvas];"
+                            f"[room][left_canvas]overlay={left['x']}:{left['y']}[lefted];"
+                            f"[lefted][center_canvas]overlay={center['x']}:{center['y']}[centered];"
+                            f"[centered][right_canvas]overlay={right['x']}:{right['y']}[outv]"
+                        )
+                    elif visualizer == "showspectrum":
+                        filter_complex = (
+                            f"{room_base_chain}[1:a]showspectrum=s={center_safe_w}x{center_safe_h}:slide=scroll"
+                            f":color=channel:scale=cbrt:saturation=4"
+                            f",format=rgba,colorkey=0x000000:0.10:0.05,colorchannelmixer=aa=0.85,"
+                            f"pad={center['w']}:{center['h']}:{center_safe_x}:{center_safe_y}:color=black@0.0,"
+                            f"{center['perspective']}[center_canvas];"
+                            f"[room][left_canvas]overlay={left['x']}:{left['y']}[lefted];"
+                            f"[lefted][center_canvas]overlay={center['x']}:{center['y']}[centered];"
+                            f"[centered][right_canvas]overlay={right['x']}:{right['y']}[outv]"
+                        )
+                    elif visualizer == "none":
+                        filter_complex = (
+                            f"{room_base_chain}"
+                            f"color=c=black@0.0:s={center['w']}x{center['h']}:r=25,format=rgba,"
+                            f"drawtext=fontfile='{f_path}':text='LOFI LIVE'"
+                            f":x=34:y=48:fontsize=40:fontcolor=0xF4E6FF"
+                            f":shadowx=3:shadowy=3:shadowcolor=black,{center['perspective']}[center_canvas];"
+                            f"[room][left_canvas]overlay={left['x']}:{left['y']}[lefted];"
+                            f"[lefted][center_canvas]overlay={center['x']}:{center['y']}[centered];"
+                            f"[centered][right_canvas]overlay={right['x']}:{right['y']}[outv]"
+                        )
+                    else:
+                        filter_complex = (
+                            f"{room_base_chain}[1:a]showfreqs=s={center_safe_w}x{center_safe_h}:mode=bar:ascale=sqrt:fscale=log"
+                            f":colors=cyan|magenta:win_func=hann"
+                            f",format=rgba,colorkey=0x000000:0.10:0.05,colorchannelmixer=aa=0.85,"
+                            f"pad={center['w']}:{center['h']}:{center_safe_x}:{center_safe_y}:color=black@0.0,"
+                            f"{center['perspective']}[center_canvas];"
+                            f"[room][left_canvas]overlay={left['x']}:{left['y']}[lefted];"
+                            f"[lefted][center_canvas]overlay={center['x']}:{center['y']}[centered];"
+                            f"[centered][right_canvas]overlay={right['x']}:{right['y']}[outv]"
+                        )
 
                 ffmpeg_cmd = ["ffmpeg", "-y"]
                 if os.name != 'nt':
                     ffmpeg_cmd.append("-re")
+                if use_video_background:
+                    if background_video_path.suffix.lower() in [".png", ".jpg", ".jpeg"]:
+                        ffmpeg_cmd.extend([
+                            "-loop", "1",
+                            "-framerate", framerate,
+                            "-i", str(background_video_path),
+                        ])
+                    else:
+                        ffmpeg_cmd.extend([
+                            "-stream_loop", "-1",
+                            "-i", str(background_video_path),
+                        ])
+                else:
+                    ffmpeg_cmd.extend([
+                        "-loop", "1",
+                        "-framerate", framerate,
+                        "-i", str(settings.canvas_static_path),
+                    ])
                 ffmpeg_cmd.extend([
-                    "-loop", "1",
-                    "-framerate", framerate,
-                    "-i", str(settings.canvas_static_path),
                     "-f", "s16le",
                     "-ac", "2",
                     "-ar", "44100",
@@ -235,7 +412,6 @@ class StreamEngine:
                 ffmpeg_cmd.extend([
                     "-c:v", "libx264",
                     "-preset", "ultrafast",
-                    "-tune", "stillimage",
                     "-threads", "4",
                     "-pix_fmt", "yuv420p",
                     "-g", str(int(framerate) * 2) if filter_complex else "30",
@@ -323,6 +499,10 @@ class StreamEngine:
                         # Local synthesis audio path
                         source_path = track.get("path")
                         orchestrator.log(f"Injecting host break audio: {track.get('title')}", "system")
+                    elif track.get("path"):
+                        # Local test/cache audio path, useful for visual QA without YouTube auth.
+                        source_path = track.get("path")
+                        orchestrator.log(f"Broadcasting local test audio: '{track.get('title')}' by {track.get('artist')}", "system")
                     else:
                         # YTMusic stream URL resolution
                         res = self.resolve_stream_url(track.get("track_id"))
