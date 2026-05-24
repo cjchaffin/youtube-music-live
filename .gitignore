@@ -12,6 +12,7 @@ env/
 data/
 *.png
 !assets/canvas_static.png
+!assets/workshop-base.png
 
 # IDEs & System
 .idea/
