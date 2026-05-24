@@ -19,11 +19,13 @@ services:
       - piper
 
   piper:
-    image: rhasspy/piper-tts:latest
+    image: artibex/piper-http:latest
     container_name: youtube-music-live-piper
     restart: unless-stopped
     ports:
       - "5000:5000"
-    command: ["--voice", "en_US-lessac-medium"]
+    environment:
+      - VOICE=en_US-lessac-medium
     volumes:
-      - ./data/tts_cache:/cache
+      - ./data/tts_cache:/app/models
+
