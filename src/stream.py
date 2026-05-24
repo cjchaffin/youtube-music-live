@@ -57,10 +57,16 @@ class StreamEngine:
     def _write_telemetry_files(self, title: str, artist: str):
         """Writes current track metadata to text files for FFmpeg drawtext overlay."""
         try:
-            settings.DATA_PATH.mkdir(parents=True, exist_ok=True)
-            with open(settings.DATA_PATH / "title.txt", "w", encoding="utf-8") as f:
+            if os.name == 'nt':
+                settings.DATA_PATH.mkdir(parents=True, exist_ok=True)
+                t_path = settings.DATA_PATH / "title.txt"
+                a_path = settings.DATA_PATH / "artist.txt"
+            else:
+                t_path = Path("/tmp/title.txt")
+                a_path = Path("/tmp/artist.txt")
+            with open(t_path, "w", encoding="utf-8") as f:
                 f.write(title)
-            with open(settings.DATA_PATH / "artist.txt", "w", encoding="utf-8") as f:
+            with open(a_path, "w", encoding="utf-8") as f:
                 f.write(artist)
         except Exception as e:
             logger.error(f"Failed to write telemetry files: {e}")
@@ -135,8 +141,8 @@ class StreamEngine:
                     a_path = str(settings.DATA_PATH / "artist.txt").replace("\\", "/").replace(":", "\\:")
                 else:
                     f_path = "/app/assets/bahnschrift.ttf"
-                    t_path = "/app/data/title.txt"
-                    a_path = "/app/data/artist.txt"
+                    t_path = "/tmp/title.txt"
+                    a_path = "/tmp/artist.txt"
                 
                 # drawtext overlays — positioned in the hero zone's track info panel
                 # Canvas layout: track info x=620, title at y=244 (size 40), artist at y=320 (size 26)
@@ -152,29 +158,29 @@ class StreamEngine:
                 # ── Visualizer overlay zone: x=60, y=660, 1800x300px (bottom strip) ──────────────
                 if visualizer == "showfreqs":
                     # Frequency bar EQ — log scale, teal/violet bars per stereo channel
-                    framerate = "30"
+                    framerate = "25"
                     filter_complex = (
-                        f"[1:a]showfreqs=s=900x150:mode=bar:ascale=sqrt:fscale=log"
+                        f"[1:a]showfreqs=s=1800x300:mode=bar:ascale=sqrt:fscale=log"
                         f":colors=0x00CCFF|0x9944FF:win_func=hann"
-                        f",scale=1800:300:flags=neighbor,format=yuv420p[freqs];"
+                        f",format=yuv420p[freqs];"
                         f"[0:v][freqs]overlay=60:650{drawtext_chain}[outv]"
                     )
                 elif visualizer == "showwaves":
                     # Centerline waveform — cyan and violet, full width
                     framerate = "25"
                     filter_complex = (
-                        f"[1:a]showwaves=s=900x150:mode=cline:colors=0x00F0FFCC|0x8800FFCC"
-                        f":scale=sqrt:draw=full,scale=1800:300:flags=neighbor,format=yuv420p[wave];"
+                        f"[1:a]showwaves=s=1800x300:mode=cline:colors=0x00F0FFCC|0x8800FFCC"
+                        f":scale=sqrt:draw=full,format=yuv420p[wave];"
                         f"[0:v][wave]overlay=60:650{drawtext_chain}[outv]"
                     )
                 elif visualizer == "showcqt":
                     # Constant-Q transform spectrum — bars only, no piano labels
-                    framerate = "30"
+                    framerate = "25"
                     filter_complex = (
-                        f"[1:a]showcqt=s=900x150:fps=30:bar_g=2:axis_h=0"
-                        f":sono_h=0:bar_h=150:count=1:tc=0.33"
+                        f"[1:a]showcqt=s=1800x300:fps=25:bar_g=2:axis_h=0"
+                        f":sono_h=0:bar_h=300:count=1:tc=0.33"
                         f":basefreq=20:endfreq=20000"
-                        f",scale=1800:300:flags=neighbor,format=yuv420p[cqt];"
+                        f",format=yuv420p[cqt];"
                         f"[0:v][cqt]overlay=60:650{drawtext_chain}[outv]"
                     )
                 elif visualizer == "avectorscope":
@@ -191,9 +197,9 @@ class StreamEngine:
                     # Scrolling spectrogram waterfall — full width
                     framerate = "25"
                     filter_complex = (
-                        f"[1:a]showspectrum=s=900x150:slide=scroll"
+                        f"[1:a]showspectrum=s=1800x300:slide=scroll"
                         f":color=channel:scale=cbrt:saturation=3"
-                        f",scale=1800:300:flags=neighbor,format=yuv420p[spec];"
+                        f",format=yuv420p[spec];"
                         f"[0:v][spec]overlay=60:650{drawtext_chain}[outv]"
                     )
                 else:  # "none" — text only, no visualizer
@@ -207,9 +213,10 @@ class StreamEngine:
                         f"[outv]"
                     )
 
-                ffmpeg_cmd = [
-                    "ffmpeg",
-                    "-y",
+                ffmpeg_cmd = ["ffmpeg", "-y"]
+                if os.name != 'nt':
+                    ffmpeg_cmd.append("-re")
+                ffmpeg_cmd.extend([
                     "-loop", "1",
                     "-framerate", framerate,
                     "-i", str(settings.canvas_static_path),
@@ -217,7 +224,7 @@ class StreamEngine:
                     "-ac", "2",
                     "-ar", "44100",
                     "-i", "pipe:0"
-                ]
+                ])
 
                 if filter_complex:
                     ffmpeg_cmd.extend(["-filter_complex", filter_complex])
@@ -228,9 +235,10 @@ class StreamEngine:
                 ffmpeg_cmd.extend([
                     "-c:v", "libx264",
                     "-preset", "ultrafast",
-                    "-tune", "stillimage" if not filter_complex else "film",
+                    "-tune", "stillimage",
+                    "-threads", "4",
                     "-pix_fmt", "yuv420p",
-                    "-g", "60" if filter_complex else "30",
+                    "-g", str(int(framerate) * 2) if filter_complex else "30",
                     "-c:a", "aac",
                     "-b:a", "192k",
                     "-ar", "44100",
