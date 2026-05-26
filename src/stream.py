@@ -6,8 +6,10 @@ import subprocess
 import threading
 import http.server
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yt_dlp
 
 from src.config import settings
@@ -78,6 +80,13 @@ class StreamEngine:
             return settings.DATA_PATH / "clock.txt"
         return Path("/tmp/clock.txt")
 
+    def _central_clock_text(self) -> str:
+        try:
+            now = datetime.now(ZoneInfo("America/Chicago"))
+        except ZoneInfoNotFoundError:
+            now = datetime.now()
+        return now.strftime("%I:%M %p").lstrip("0")
+
     def _start_clock_writer(self):
         """Updates a tiny text file so FFmpeg can render a live clock."""
         if self._clock_thread and self._clock_thread.is_alive():
@@ -88,7 +97,7 @@ class StreamEngine:
             while orchestrator.is_running:
                 try:
                     with open(path, "w", encoding="utf-8") as f:
-                        f.write(time.strftime("%I:%M %p").lstrip("0"))
+                        f.write(self._central_clock_text())
                 except Exception as e:
                     logger.warning(f"Failed to write clock telemetry: {e}")
                 time.sleep(1)
